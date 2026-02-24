@@ -1,0 +1,70 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+/* Luxury smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d4af37;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #f4d03f;
+}
+
+/* Luxury base styling */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: #0f0f0f;
+  color: #f5f5f5;
+  line-height: 1.6;
+}
+
+/* Typography luxury styling */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Playfair Display', serif;
+  letter-spacing: 0.05em;
+}
+
+/* Gold glow effect utility */
+.glow-gold {
+  box-shadow: 0 0 20px rgba(212, 175, 55, 0.3),
+              0 0 40px rgba(212, 175, 55, 0.1);
+}
+
+/* Luxury button styling */
+button {
+  transition: all 0.3s ease;
+}
+
+button:hover {
+  box-shadow: 0 0 20px rgba(212, 175, 55, 0.4);
+}
+
+/* Smooth gradient backgrounds */
+.luxury-gradient {
+  background: linear-gradient(135deg, #d4af37 0%, #f4d03f 50%, #d4af37 100%);
+  background-size: 200% 200%;
+}
+
+/* Elegant borders */
+.luxury-border {
+  border: 2px solid;
+  border-image: linear-gradient(45deg, #d4af37, #f4d03f, #d4af37) 1;
+}
