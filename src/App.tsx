@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
@@ -7,13 +7,23 @@ import { Footer } from './components/Footer';
 import { BackgroundParticles } from './components/BackgroundParticles';
 import { FavoritesPage } from './pages/Favorites';
 import { LedgerPage } from './pages/Ledger';
+import { AuthPage } from './pages/AuthPage';
+import { ProtectedRoute } from './components/ProtectedRoute';
+import { useNavigate } from 'react-router-dom';
 
 export default function App() {
-  const studioRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   const handleEnterStudio = () => {
-    studioRef.current?.scrollIntoView({ behavior: 'smooth' });
+    navigate('/studio');
   };
+
+  useEffect(() => {
+    // Keep legacy hash links working after moving the studio into a protected route.
+    if (window.location.hash === '#studio') {
+      navigate('/studio', { replace: true });
+    }
+  }, [navigate]);
 
   return (
     <div className="min-h-screen relative overflow-x-hidden" style={{ backgroundColor: '#0f0f0f' }}>
@@ -34,14 +44,34 @@ export default function App() {
             element={
               <>
                 <Hero onEnterStudio={handleEnterStudio} />
-                <div ref={studioRef}>
-                  <DesignStudio />
-                </div>
               </>
             }
           />
-          <Route path="/favorites" element={<FavoritesPage />} />
-          <Route path="/ledger" element={<LedgerPage />} />
+          <Route path="/auth" element={<AuthPage />} />
+          <Route
+            path="/studio"
+            element={
+              <ProtectedRoute>
+                <DesignStudio />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/favorites"
+            element={
+              <ProtectedRoute>
+                <FavoritesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ledger"
+            element={
+              <ProtectedRoute>
+                <LedgerPage />
+              </ProtectedRoute>
+            }
+          />
         </Routes>
         <Footer />
       </div>

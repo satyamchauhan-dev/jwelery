@@ -1,17 +1,26 @@
 import { motion } from 'motion/react';
 import { Menu, X } from 'lucide-react';
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 export function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const { user, signOutUser } = useAuth();
+  const navigate = useNavigate();
 
   const navItems = [
-    { label: 'Studio', href: '/#studio' },
+    { label: 'Studio', to: '/studio' },
     { label: 'Favorites', to: '/favorites' },
     { label: 'Ledger', to: '/ledger' },
     { label: 'About', href: '#' },
   ];
+
+  const handleSignOut = async () => {
+    await signOutUser();
+    setIsMenuOpen(false);
+    navigate('/auth');
+  };
   
   return (
     <motion.nav 
@@ -34,7 +43,7 @@ export function Navbar() {
           }}
           whileHover={{ scale: 1.02 }}
         >
-          Komal Jewellery
+          <Link to="/">Komal Jewellery</Link>
         </motion.div>
         
         {/* Desktop Menu */}
@@ -64,6 +73,24 @@ export function Navbar() {
               />
             </motion.div>
           ))}
+
+          {user ? (
+            <button
+              onClick={handleSignOut}
+              className="px-4 py-2 rounded-lg text-xs tracking-widest border"
+              style={{ borderColor: '#d4af37', color: '#d4af37' }}
+            >
+              Logout
+            </button>
+          ) : (
+            <Link
+              to="/auth"
+              className="px-4 py-2 rounded-lg text-xs tracking-widest"
+              style={{ backgroundColor: '#d4af37', color: '#0f0f0f' }}
+            >
+              Login / Register
+            </Link>
+          )}
         </div>
         
         {/* Mobile Menu Button */}
@@ -123,6 +150,25 @@ export function Navbar() {
               </a>
             )
           ))}
+
+          {user ? (
+            <button
+              onClick={handleSignOut}
+              className="w-full text-left px-6 py-3 text-sm tracking-widest border-l-2"
+              style={{ color: '#d4af37', borderColor: '#d4af37' }}
+            >
+              Logout
+            </button>
+          ) : (
+            <Link
+              to="/auth"
+              className="block px-6 py-3 text-sm tracking-widest border-l-2"
+              style={{ color: '#d4af37', borderColor: '#d4af37' }}
+              onClick={() => setIsMenuOpen(false)}
+            >
+              Login / Register
+            </Link>
+          )}
         </motion.div>
       )}
     </motion.nav>

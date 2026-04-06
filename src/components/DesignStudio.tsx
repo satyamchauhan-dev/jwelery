@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { MetalSelector } from './MetalSelector';
 import { CategorySelector } from './CategorySelector';
@@ -7,18 +7,32 @@ import { StyleSelect } from './StyleSelect';
 import { DetailingInput } from './DetailingInput';
 import { GenerateButton } from './GenerateButton';
 import { ImageDisplay } from './ImageDisplay';
+import { useAuth } from '../context/AuthContext';
+import {
+  addFavorite,
+  addOrder,
+  favoriteExistsByHash,
+  saveGeneratedImageMetadata,
+  uploadGeneratedImageForUser,
+} from '../lib/userData';
 
 export function DesignStudio() {
+  const { user } = useAuth();
   const [metal, setMetal] = useState('gold');
   const [category, setCategory] = useState('ring');
   const [weight, setWeight] = useState(10);
   const [style, setStyle] = useState('calcutti');
   const [details, setDetails] = useState('');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imagePath, setImagePath] = useState('');
+  const [imageHash, setImageHash] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSavingFavorite, setIsSavingFavorite] = useState(false);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [apiUrl, setApiUrl] = useState('https://19e4-34-127-3-70.ngrok-free.app');
   const [lastPrompt, setLastPrompt] = useState('');
   const [isFavorited, setIsFavorited] = useState(false);
+  const [studioMessage, setStudioMessage] = useState('');
   const [isOrderOpen, setIsOrderOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -26,52 +40,18 @@ export function DesignStudio() {
   const [advancePayment, setAdvancePayment] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
 
-  const favoritesKey = 'komal-jewellery-favorites';
-  const ledgerKey = 'komal-jewellery-ledger';
-
-  const readFavorites = () => {
-    try {
-      const raw = localStorage.getItem(favoritesKey);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const writeFavorites = (items: Array<Record<string, unknown>>) => {
-    localStorage.setItem(favoritesKey, JSON.stringify(items));
-  };
-
-  const readLedger = () => {
-    try {
-      const raw = localStorage.getItem(ledgerKey);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const writeLedger = (items: Array<Record<string, unknown>>) => {
-    localStorage.setItem(ledgerKey, JSON.stringify(items));
-  };
-
-  useEffect(() => {
-    if (!imageUrl) {
-      setIsFavorited(false);
-      return;
-    }
-    const favorites = readFavorites();
-    const exists = favorites.some((item) => item.imageUrl === imageUrl);
-    setIsFavorited(exists);
-  }, [imageUrl]);
+  const friendlySaveError = (error: unknown) =>
+    error instanceof Error ? error.message : 'Could not save locally.';
 
   const handleGenerate = async () => {
+    if (!user) return;
+
     setIsLoading(true);
+    setStudioMessage('');
     setImageUrl(null);
+    setImagePath('');
+    setImageHash('');
+    setIsFavorited(false);
 
     try {
       if (!apiUrl.trim()) {
@@ -106,55 +86,97 @@ export function DesignStudio() {
       const data = await response.json();
       console.log('Response data received');
       
-      // Convert base64 to data URL for display
       if (data.image_base64) {
-        console.log('Image base64 received, creating data URL');
-        const imageUrl = `data:image/png;base64,${data.image_base64}`;
-        setImageUrl(imageUrl);
+        const imageDataUrl = String(data.image_base64).startsWith('data:image')
+          ? String(data.image_base64)
+          : `data:image/png;base64,${data.image_base64}`;
+
+        // Show generated image immediately.
+        setImageUrl(imageDataUrl);
+        setStudioMessage('Design generated. Saving locally...');
+
+        try {
+          const uploaded = await uploadGeneratedImageForUser(user.uid, imageDataUrl);
+          setImageUrl(uploaded.imageUrl);
+          setImagePath(uploaded.imagePath);
+          setImageHash(uploaded.imageHash);
+
+          await saveGeneratedImageMetadata(user.uid, {
+            imageUrl: uploaded.imageUrl,
+            imagePath: uploaded.imagePath,
+            imageHash: uploaded.imageHash,
+            prompt,
+            metal,
+            category,
+            style,
+            weight,
+            details: details || 'elegant engraved design',
+          });
+
+          const alreadyFavorite = await favoriteExistsByHash(user.uid, uploaded.imageHash);
+          setIsFavorited(alreadyFavorite);
+          setStudioMessage('Design generated and saved locally.');
+        } catch (saveError) {
+          setImagePath('');
+          setImageHash('');
+          setIsFavorited(false);
+          setStudioMessage(
+            `Design generated, but local save failed: ${friendlySaveError(saveError)} You can still download this image.`,
+          );
+        }
       } else {
         console.error('No image_base64 in response:', data);
+        throw new Error('No image received from the generation API.');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       console.error('Image generation error:', error);
       console.error('Error details:', message);
       setImageUrl(null);
+      setStudioMessage(message);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSaveFavorite = () => {
-    if (!imageUrl) return;
-
-    const favorites = readFavorites();
-    const exists = favorites.some((item) => item.imageUrl === imageUrl);
-    if (exists) {
-      setIsFavorited(true);
+  const handleSaveFavorite = async () => {
+    if (!user || !imageUrl || isSavingFavorite) return;
+    if (!imagePath || !imageHash) {
+      setStudioMessage('This image is not saved locally yet, so it cannot be added to favorites.');
       return;
     }
 
-    const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setIsSavingFavorite(true);
+    setStudioMessage('');
 
-    const next = [
-      {
-        id,
+    try {
+      const exists = await favoriteExistsByHash(user.uid, imageHash);
+      if (exists) {
+        setIsFavorited(true);
+        setStudioMessage('This design is already in your favorites.');
+        return;
+      }
+
+      await addFavorite(user.uid, {
         imageUrl,
+        imagePath,
+        imageHash,
         prompt: lastPrompt,
         metal,
         category,
         style,
         weight,
         details: details || 'elegant engraved design',
-        createdAt: new Date().toISOString(),
-      },
-      ...favorites,
-    ];
+      });
 
-    writeFavorites(next);
-    setIsFavorited(true);
+      setIsFavorited(true);
+      setStudioMessage('Saved to your favorites.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save favorite.';
+      setStudioMessage(message);
+    } finally {
+      setIsSavingFavorite(false);
+    }
   };
 
   const handleDownload = () => {
@@ -169,25 +191,28 @@ export function DesignStudio() {
 
   const handleBookDesign = () => {
     if (!imageUrl) return;
+    if (!imagePath || !imageHash) {
+      setStudioMessage('Local save is required before booking. Please generate again.');
+      return;
+    }
     setIsOrderOpen(true);
   };
 
-  const handleSubmitOrder = (event: FormEvent) => {
+  const handleSubmitOrder = async (event: FormEvent) => {
     event.preventDefault();
-    if (!imageUrl) return;
+    if (!user || !imageUrl || !imagePath || !imageHash) return;
     if (!customerName.trim() || !customerPhone.trim() || !customerAddress.trim()) {
       return;
     }
 
-    const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setIsSubmittingOrder(true);
+    setStudioMessage('');
 
-    const orders = readLedger();
-    const next = [
-      {
-        id,
+    try {
+      await addOrder(user.uid, {
         imageUrl,
+        imagePath,
+        imageHash,
         prompt: lastPrompt,
         metal,
         category,
@@ -199,18 +224,21 @@ export function DesignStudio() {
         customerAddress: customerAddress.trim(),
         advancePayment: advancePayment.trim(),
         orderNotes: orderNotes.trim(),
-        createdAt: new Date().toISOString(),
-      },
-      ...orders,
-    ];
+      });
 
-    writeLedger(next);
-    setIsOrderOpen(false);
-    setCustomerName('');
-    setCustomerPhone('');
-    setCustomerAddress('');
-    setAdvancePayment('');
-    setOrderNotes('');
+      setIsOrderOpen(false);
+      setCustomerName('');
+      setCustomerPhone('');
+      setCustomerAddress('');
+      setAdvancePayment('');
+      setOrderNotes('');
+      setStudioMessage('Order added to your ledger.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not place order.';
+      setStudioMessage(message);
+    } finally {
+      setIsSubmittingOrder(false);
+    }
   };
 
   return (
@@ -280,11 +308,17 @@ export function DesignStudio() {
               isLoading={isLoading}
               onSaveFavorite={handleSaveFavorite}
               onDownload={handleDownload}
-              isFavorited={isFavorited}
+              isFavorited={isFavorited || isSavingFavorite}
               onBookDesign={handleBookDesign}
             />
           </motion.div>
         </div>
+
+        {studioMessage ? (
+          <p className="mt-6 text-sm text-center" style={{ color: '#d4af37' }}>
+            {studioMessage}
+          </p>
+        ) : null}
 
         {isOrderOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
@@ -368,13 +402,15 @@ export function DesignStudio() {
                     whileHover={{ scale: 1.03 }}
                     whileTap={{ scale: 0.97 }}
                     type="submit"
+                    disabled={isSubmittingOrder}
                     className="flex-1 px-4 py-2.5 rounded-lg text-sm tracking-wide"
                     style={{
                       backgroundColor: '#d4af37',
                       color: '#0f0f0f',
+                      opacity: isSubmittingOrder ? 0.7 : 1,
                     }}
                   >
-                    Confirm Order
+                    {isSubmittingOrder ? 'Saving...' : 'Confirm Order'}
                   </motion.button>
                   <motion.button
                     whileHover={{ scale: 1.03 }}

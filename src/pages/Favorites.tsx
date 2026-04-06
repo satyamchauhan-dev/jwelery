@@ -1,51 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { Download, ShoppingBag, Trash2 } from 'lucide-react';
-
-type FavoriteItem = {
-  id: string;
-  imageUrl: string;
-  prompt: string;
-  metal: string;
-  category: string;
-  style: string;
-  weight: number;
-  details: string;
-  createdAt: string;
-};
-
-const favoritesKey = 'komal-jewellery-favorites';
-const ledgerKey = 'komal-jewellery-ledger';
-
-const readFavorites = (): FavoriteItem[] => {
-  try {
-    const raw = localStorage.getItem(favoritesKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const writeFavorites = (items: FavoriteItem[]) => {
-  localStorage.setItem(favoritesKey, JSON.stringify(items));
-};
-
-const readLedger = (): Array<Record<string, unknown>> => {
-  try {
-    const raw = localStorage.getItem(ledgerKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const writeLedger = (items: Array<Record<string, unknown>>) => {
-  localStorage.setItem(ledgerKey, JSON.stringify(items));
-};
+import { useAuth } from '../context/AuthContext';
+import { addOrder, listFavorites, removeFavorite, type FavoriteItem } from '../lib/userData';
 
 const formatLabel = (value: string) => {
   if (!value) return '';
@@ -53,7 +10,10 @@ const formatLabel = (value: string) => {
 };
 
 export function FavoritesPage() {
+  const { user } = useAuth();
   const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
+  const [isPageLoading, setIsPageLoading] = useState(true);
+  const [pageMessage, setPageMessage] = useState('');
   const [isOrderOpen, setIsOrderOpen] = useState(false);
   const [selectedFavorite, setSelectedFavorite] = useState<FavoriteItem | null>(null);
   const [customerName, setCustomerName] = useState('');
@@ -63,13 +23,37 @@ export function FavoritesPage() {
   const [orderNotes, setOrderNotes] = useState('');
 
   useEffect(() => {
-    setFavorites(readFavorites());
-  }, []);
+    const loadFavorites = async () => {
+      if (!user) return;
 
-  const handleRemove = (id: string) => {
+      setIsPageLoading(true);
+      try {
+        const data = await listFavorites(user.uid);
+        setFavorites(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not load favorites.';
+        setPageMessage(message);
+      } finally {
+        setIsPageLoading(false);
+      }
+    };
+
+    void loadFavorites();
+  }, [user]);
+
+  const handleRemove = async (id: string) => {
+    if (!user) return;
+
     const next = favorites.filter((item) => item.id !== id);
     setFavorites(next);
-    writeFavorites(next);
+
+    try {
+      await removeFavorite(user.uid, id);
+      setPageMessage('Favorite removed.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not remove favorite.';
+      setPageMessage(message);
+    }
   };
 
   const handleDownload = (imageUrl: string, category: string) => {
@@ -86,20 +70,16 @@ export function FavoritesPage() {
     setIsOrderOpen(true);
   };
 
-  const handleSubmitOrder = (event: FormEvent) => {
+  const handleSubmitOrder = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selectedFavorite) return;
+    if (!user || !selectedFavorite) return;
     if (!customerName.trim() || !customerPhone.trim() || !customerAddress.trim()) return;
 
-    const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
-    const orders = readLedger();
-    const next = [
-      {
-        id,
+    try {
+      await addOrder(user.uid, {
         imageUrl: selectedFavorite.imageUrl,
+        imagePath: selectedFavorite.imagePath,
+        imageHash: selectedFavorite.imageHash,
         prompt: selectedFavorite.prompt,
         metal: selectedFavorite.metal,
         category: selectedFavorite.category,
@@ -111,19 +91,20 @@ export function FavoritesPage() {
         customerAddress: customerAddress.trim(),
         advancePayment: advancePayment.trim(),
         orderNotes: orderNotes.trim(),
-        createdAt: new Date().toISOString(),
-      },
-      ...orders,
-    ];
+      });
 
-    writeLedger(next);
-    setIsOrderOpen(false);
-    setSelectedFavorite(null);
-    setCustomerName('');
-    setCustomerPhone('');
-    setCustomerAddress('');
-    setAdvancePayment('');
-    setOrderNotes('');
+      setIsOrderOpen(false);
+      setSelectedFavorite(null);
+      setCustomerName('');
+      setCustomerPhone('');
+      setCustomerAddress('');
+      setAdvancePayment('');
+      setOrderNotes('');
+      setPageMessage('Order added to your ledger.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not place order.';
+      setPageMessage(message);
+    }
   };
 
   return (
@@ -142,7 +123,13 @@ export function FavoritesPage() {
           </p>
         </motion.div>
 
-        {favorites.length === 0 ? (
+        {isPageLoading ? (
+          <div className="text-center py-20">
+            <p className="text-lg" style={{ color: '#888888' }}>
+              Loading favorites...
+            </p>
+          </div>
+        ) : favorites.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-lg" style={{ color: '#888888' }}>
               No favorites yet. Save a design to see it here.
@@ -228,6 +215,12 @@ export function FavoritesPage() {
             ))}
           </div>
         )}
+
+        {pageMessage ? (
+          <p className="text-center text-sm mt-6" style={{ color: '#d4af37' }}>
+            {pageMessage}
+          </p>
+        ) : null}
       </div>
 
       {isOrderOpen && selectedFavorite && (

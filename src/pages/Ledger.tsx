@@ -1,36 +1,8 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Download } from 'lucide-react';
-
-type LedgerItem = {
-  id: string;
-  imageUrl: string;
-  prompt: string;
-  metal: string;
-  category: string;
-  style: string;
-  weight: number;
-  details: string;
-  customerName: string;
-  customerPhone: string;
-  customerAddress: string;
-  advancePayment: string;
-  orderNotes: string;
-  createdAt: string;
-};
-
-const ledgerKey = 'komal-jewellery-ledger';
-
-const readLedger = (): LedgerItem[] => {
-  try {
-    const raw = localStorage.getItem(ledgerKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
+import { useAuth } from '../context/AuthContext';
+import { listOrders, type LedgerItem } from '../lib/userData';
 
 const formatLabel = (value: string) => {
   if (!value) return '';
@@ -38,12 +10,30 @@ const formatLabel = (value: string) => {
 };
 
 export function LedgerPage() {
+  const { user } = useAuth();
   const [ledger, setLedger] = useState<LedgerItem[]>([]);
   const [activeImage, setActiveImage] = useState<string | null>(null);
+  const [isPageLoading, setIsPageLoading] = useState(true);
+  const [pageMessage, setPageMessage] = useState('');
 
   useEffect(() => {
-    setLedger(readLedger());
-  }, []);
+    const loadLedger = async () => {
+      if (!user) return;
+
+      setIsPageLoading(true);
+      try {
+        const data = await listOrders(user.uid);
+        setLedger(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not load ledger.';
+        setPageMessage(message);
+      } finally {
+        setIsPageLoading(false);
+      }
+    };
+
+    void loadLedger();
+  }, [user]);
 
   const handleDownload = (imageUrl: string, category: string) => {
     const link = document.createElement('a');
@@ -70,7 +60,13 @@ export function LedgerPage() {
           </p>
         </motion.div>
 
-        {ledger.length === 0 ? (
+        {isPageLoading ? (
+          <div className="text-center py-20">
+            <p className="text-lg" style={{ color: '#888888' }}>
+              Loading ledger...
+            </p>
+          </div>
+        ) : ledger.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-lg" style={{ color: '#888888' }}>
               No orders yet. Book a design to see it here.
@@ -138,6 +134,12 @@ export function LedgerPage() {
             ))}
           </div>
         )}
+
+        {pageMessage ? (
+          <p className="text-center text-sm mt-6" style={{ color: '#d4af37' }}>
+            {pageMessage}
+          </p>
+        ) : null}
       </div>
 
       {activeImage && (
