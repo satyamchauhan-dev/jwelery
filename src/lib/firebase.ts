@@ -2,29 +2,42 @@ import { initializeApp } from 'firebase/app';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
+
+const requiredFirebaseEnvKeys = [
+  'VITE_FIREBASE_API_KEY',
+  'VITE_FIREBASE_AUTH_DOMAIN',
+  'VITE_FIREBASE_PROJECT_ID',
+  'VITE_FIREBASE_MESSAGING_SENDER_ID',
+  'VITE_FIREBASE_APP_ID',
+] as const;
+
+const missingFirebaseEnvKeys = requiredFirebaseEnvKeys.filter(
+  (key) => !import.meta.env[key],
+);
+
+if (missingFirebaseEnvKeys.length > 0) {
+  throw new Error(
+    `Missing required Firebase env vars: ${missingFirebaseEnvKeys.join(', ')}. ` +
+      'Define them in your .env file.',
+  );
+}
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyDh8FiXf5azyvxkIhjIa3vaanXLRyw55Ps',
-  authDomain: 'karan-jewelery.firebaseapp.com',
-  projectId: 'karan-jewelery',
-  storageBucket: 'karan-jewelery.firebasestorage.app',
-  messagingSenderId: '456052651192',
-  appId: '1:456052651192:web:bb3fd8e79413ea4ac5f04d',
-  measurementId: 'G-WPBJ33J8WL',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
 export const db = getFirestore(firebaseApp);
-export const storage = getStorage(firebaseApp);
-
-// Keep UI responsive when Storage is misconfigured or denied by rules.
-storage.maxUploadRetryTime = 15000;
-storage.maxOperationRetryTime = 10000;
 
 void isSupported().then((supported) => {
-  if (supported) {
+  if (supported && firebaseConfig.measurementId) {
     getAnalytics(firebaseApp);
   }
 });

@@ -1,3 +1,18 @@
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  setDoc,
+  where,
+} from 'firebase/firestore';
+import { db } from './firebase';
+
 export type FavoriteItem = {
   id: string;
   imageUrl: string;
@@ -45,26 +60,13 @@ type GeneratedImageMetadata = {
   createdAt: string;
 };
 
-const favoritesKey = (uid: string) => `komal:favorites:${uid}`;
-const ledgerKey = (uid: string) => `komal:ledger:${uid}`;
-const generatedKey = (uid: string) => `komal:generated:${uid}`;
+const userDoc = (uid: string) => doc(db, 'users', uid);
+const favoritesCollection = (uid: string) => collection(userDoc(uid), 'favorites');
+const ledgerCollection = (uid: string) => collection(userDoc(uid), 'orders');
+const generatedCollection = (uid: string) => collection(userDoc(uid), 'generatedImages');
 
 const createId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-
-const readArray = <T>(key: string): T[] => {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
-};
-
-const writeArray = <T>(key: string, value: T[]) => {
-  localStorage.setItem(key, JSON.stringify(value));
-};
+const nowIso = () => new Date().toISOString();
 
 const toBlob = async (dataUrl: string) => {
   const response = await fetch(dataUrl);
@@ -83,94 +85,137 @@ export async function uploadGeneratedImageForUser(uid: string, imageDataUrl: str
   const imageBlob = await toBlob(imageDataUrl);
   const imageHash = await sha256Hex(imageBlob);
 
-  // Local-only mode: keep image directly in browser storage flow.
-  const imagePath = `local://${uid}/images/${imageHash}.png`;
-  return { imageUrl: imageDataUrl, imagePath, imageHash };
+  const existingDoc = await getDoc(doc(generatedCollection(uid), imageHash));
+  if (existingDoc.exists()) {
+    const existing = existingDoc.data() as Partial<GeneratedImageMetadata>;
+    if (existing.imageUrl && existing.imagePath) {
+      return {
+        imageUrl: existing.imageUrl,
+        imagePath: existing.imagePath,
+        imageHash,
+      };
+    }
+  }
+
+  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+  const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+
+  if (!cloudName || !uploadPreset) {
+    throw new Error(
+      'Cloudinary is not configured. Add VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET to .env',
+    );
+  }
+
+  const formData = new FormData();
+  formData.append('file', imageBlob, `design-${imageHash}.png`);
+  formData.append('upload_preset', uploadPreset);
+  formData.append('folder', `jwelery/${uid}`);
+  formData.append('public_id', imageHash);
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const payload = await response.json();
+  if (!response.ok) {
+    const message = payload?.error?.message ?? 'Cloudinary upload failed.';
+    throw new Error(message);
+  }
+
+  const imageUrl = payload.secure_url as string | undefined;
+  const publicId = payload.public_id as string | undefined;
+
+  if (!imageUrl || !publicId) {
+    throw new Error('Cloudinary response is missing secure_url/public_id.');
+  }
+
+  const imagePath = `cloudinary://${publicId}`;
+  return { imageUrl, imagePath, imageHash };
 }
 
 export async function saveGeneratedImageMetadata(
   uid: string,
   metadata: Omit<GeneratedImageMetadata, 'id' | 'createdAt'>,
 ) {
-  const key = generatedKey(uid);
-  const items = readArray<GeneratedImageMetadata>(key);
-  const next: GeneratedImageMetadata = {
-    id: metadata.imageHash,
-    ...metadata,
-    createdAt: new Date().toISOString(),
-  };
-
-  const filtered = items.filter((item) => item.imageHash !== metadata.imageHash);
-  writeArray(key, [next, ...filtered]);
-}
-
-export async function addFavorite(uid: string, item: Omit<FavoriteItem, 'id' | 'createdAt'>) {
-  const key = favoritesKey(uid);
-  const items = readArray<FavoriteItem>(key);
-  const next: FavoriteItem = {
-    id: createId('fav'),
-    ...item,
-    createdAt: new Date().toISOString(),
-  };
-
-  writeArray(key, [next, ...items]);
-  return next.id;
-}
-
-export async function removeFavorite(uid: string, favoriteId: string) {
-  const key = favoritesKey(uid);
-  const items = readArray<FavoriteItem>(key);
-  writeArray(
-    key,
-    items.filter((item) => item.id !== favoriteId),
+  const generatedDoc = doc(generatedCollection(uid), metadata.imageHash);
+  await setDoc(
+    generatedDoc,
+    {
+      ...metadata,
+      createdAt: nowIso(),
+    },
+    { merge: true },
   );
 }
 
+export async function addFavorite(uid: string, item: Omit<FavoriteItem, 'id' | 'createdAt'>) {
+  const id = createId('fav');
+  const favoriteDoc = doc(favoritesCollection(uid), id);
+  await setDoc(favoriteDoc, {
+    ...item,
+    createdAt: nowIso(),
+  });
+  return id;
+}
+
+export async function removeFavorite(uid: string, favoriteId: string) {
+  await deleteDoc(doc(favoritesCollection(uid), favoriteId));
+}
+
 export async function listFavorites(uid: string) {
-  const key = favoritesKey(uid);
-  const items = readArray<FavoriteItem>(key);
-  return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const snapshot = await getDocs(query(favoritesCollection(uid), orderBy('createdAt', 'desc')));
+  return snapshot.docs.map((item) => {
+    const data = item.data() as Omit<FavoriteItem, 'id'>;
+    return {
+      id: item.id,
+      ...data,
+    };
+  });
 }
 
 export async function favoriteExistsByHash(uid: string, imageHash: string) {
-  const key = favoritesKey(uid);
-  const items = readArray<FavoriteItem>(key);
-  return items.some((item) => item.imageHash === imageHash);
+  const snapshot = await getDocs(
+    query(favoritesCollection(uid), where('imageHash', '==', imageHash), limit(1)),
+  );
+  return !snapshot.empty;
 }
 
 export async function addOrder(uid: string, item: Omit<LedgerItem, 'id' | 'createdAt'>) {
-  const key = ledgerKey(uid);
-  const items = readArray<LedgerItem>(key);
-  const next: LedgerItem = {
-    id: createId('order'),
+  const orderRef = await addDoc(ledgerCollection(uid), {
     ...item,
-    createdAt: new Date().toISOString(),
-  };
-
-  writeArray(key, [next, ...items]);
-  return next.id;
+    createdAt: nowIso(),
+  });
+  return orderRef.id;
 }
 
 export async function listOrders(uid: string) {
-  const key = ledgerKey(uid);
-  const items = readArray<LedgerItem>(key);
-  return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const snapshot = await getDocs(query(ledgerCollection(uid), orderBy('createdAt', 'desc')));
+  return snapshot.docs.map((item) => {
+    const data = item.data() as Omit<LedgerItem, 'id'>;
+    return {
+      id: item.id,
+      ...data,
+    };
+  });
 }
 
 export async function getImageUrlFromPath(imagePath: string) {
+  if (imagePath.startsWith('cloudinary://')) {
+    return imagePath;
+  }
   return imagePath;
 }
 
 export async function ensureFavoriteUrls(_uid: string) {
-  // No-op in local mode because image URLs are stored directly.
+  // No-op: Cloudinary URL is stored directly in Firestore.
 }
 
 export async function ensureLedgerUrls(_uid: string) {
-  // No-op in local mode because image URLs are stored directly.
+  // No-op: Cloudinary URL is stored directly in Firestore.
 }
 
 export async function hasGeneratedImage(uid: string, imageHash: string) {
-  const key = generatedKey(uid);
-  const items = readArray<GeneratedImageMetadata>(key);
-  return items.some((item) => item.imageHash === imageHash);
+  const generatedDoc = await getDoc(doc(generatedCollection(uid), imageHash));
+  return generatedDoc.exists();
 }
